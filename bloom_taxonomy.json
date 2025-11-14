@@ -1,0 +1,204 @@
+
+{
+    "RECORDAR": {
+        "definicion": "Recuperar conocimiento relevante de la memoria de largo plazo.",
+        "subprocesos": {
+            "Reconocer": {
+                "nombres_alternativos": "Identificar",
+                "definicion_ejemplo": "Localizar en la memoria de largo plazo conocimientos que correspondan con un material presentado (por ejemplo, reconocer [ en un material dado ] las fechas de eventos importantes en la historia de un país).",
+                "Preguntas_tipo": [
+                    "¿Cuál de las siguientes opciones representa [un elemento específico] mencionado en el texto?",
+                    "Identifica en la lista la característica que corresponde a [concepto clave].",
+                    "Según el mapa/gráfico/diagrama, ¿dónde se encuentra [ubicación o dato]?"
+                ]
+            },
+            "Evocar": {
+                "nombres_alternativos": "Recuperar",
+                "definicion_ejemplo": "Recuperar conocimiento relevante de la memoria de largo plazo (por ejemplo, recordar las fechas de eventos importantes de la historia de un país).",
+                "Preguntas_tipo": [
+                    "¿Cuál es la definición de [término clave]?",
+                    "¿Qué evento histórico ocurrió en el año [fecha]?",
+                    "¿Cuál de las siguientes fórmulas se utiliza para calcular [un valor específico]?"
+                ]
+            }
+        }
+    },
+    "COMPRENDER": {
+        "definicion": "Construir significado a partir de contenidos educativos, incluyendo comunicación oral, escrita y gráfica [ o visual ].",
+        "subprocesos": {
+            "Interpretar": {
+                "nombres_alternativos": "Aclarar, parafrasear, representar, traducir",
+                "definicion_ejemplo": "Transformar de una forma de representación (p. ej. numérica) a otra (p. ej. verbal) (p. ej. parafrasear documentos y discursos importantes).",
+                "Preguntas_tipo": [
+                    "¿Qué significa la frase '[cita del texto]' en el contexto del párrafo?",
+                    "¿Cuál de las siguientes opciones expresa la misma idea que el argumento principal del autor?",
+                    "Si los datos del gráfico se expresaran en palabras, ¿cuál sería la descripción correcta?"
+                ]
+            },
+            "Ejemplificar": {
+                "nombres_alternativos": "Ilustrar, citar casos, poner ejemplos",
+                "definicion_ejemplo": "Poner un ejemplo específico o una muestra de un concepto o principio (p. ej. dar ejemplos de varios estilos artísticos en pintura).",
+                "Preguntas_tipo": [
+                    "¿Cuál de los siguientes es un ejemplo de [concepto abstracto]?",
+                    "¿Qué situación ilustra el principio de [principio científico/teórico]?",
+                    "Selecciona la opción que muestra una aplicación correcta de la técnica de [técnica específica]."
+                ]
+            },
+            "Clasificar": {
+                "nombres_alternativos": "Categorizar, subsumir",
+                "definicion_ejemplo": "Determinar que algo pertenece a una categoría (p. ej. clasificar casos observados o descritos de desórdenes mentales).",
+                "Preguntas_tipo": [
+                    "¿A qué categoría pertenece el elemento [elemento específico] según la clasificación de [autor/teoría]?",
+                    "Dado el siguiente caso, ¿cuál es su clasificación correcta según los criterios del texto?",
+                    "¿Cuál de las siguientes opciones NO pertenece al grupo de [nombre de la categoría]?"
+                ]
+            },
+            "Resumir": {
+                "nombres_alternativos": "Abstraer, generalizar",
+                "definicion_ejemplo": "Extraer el tema general o los puntos principales (p. ej. escribir un resumen breve del suceso mostrado en un video).",
+                "Preguntas_tipo": [
+                    "¿Cuál de las siguientes opciones enuncia el argumento central del texto?",
+                    "¿Qué título describe el tema central del pasaje?",
+                    "El propósito del experimento descrito es..."
+                ]
+            },
+            "Inferir": {
+                "nombres_alternativos": "Concluir, extrapolar, interpolar, predecir",
+                "definicion_ejemplo": "Sacar una conclusión lógica de la información presentada (p. ej., en el aprendizaje de una lengua extranjera, inferir principios gramaticales a partir de ejemplos).",
+                "Preguntas_tipo": [
+                    "A partir de los datos presentados, ¿qué se puede concluir sobre [un tema específico]?",
+                    "Basado en la evidencia del texto, se puede deducir que el personaje...",
+                    "¿Qué implicación lógica se deriva de la afirmación del autor en el último párrafo?"
+                ]
+            },
+            "Comparar": {
+                "nombres_alternativos": "Contrastar, establecer correspondencias, esquematizar",
+                "definicion_ejemplo": "Detectar correspondencias entre dos ideas, objetos, etc. (p. ej. comparar eventos históricos con situaciones actuales).",
+                "Preguntas_tipo": [
+                    "¿Cuál es una diferencia fundamental entre [concepto A] y [concepto B]?",
+                    "¿Qué característica tienen en común [elemento A] y [elemento B]?",
+                    "¿Cuál de las siguientes opciones establece una correspondencia correcta entre los eventos históricos presentados?"
+                ]
+            },
+            "Explicar": {
+                "nombres_alternativos": "Construir modelos",
+                "definicion_ejemplo": "Construir un modelo de causa-efecto de un sistema (p. ej. explicar las causas de eventos importantes del siglo XVIII en Francia).",
+                "Preguntas_tipo": [
+                    "¿Cuál es la causa del fenómeno descrito en el texto?",
+                    "¿Qué opción describe correctamente la relación de causa y efecto entre [evento A] y [evento B]?",
+                    "Según el modelo presentado, ¿cuál es el efecto de un aumento en [variable X] sobre [variable Y]?"
+                ]
+            }
+        }
+    },
+    "APLICAR": {
+        "definicion": "Desarrollar o usar un procedimiento en una situación dada.",
+        "subprocesos": {
+            "Ejecutar": {
+                "nombres_alternativos": "Llevar a cabo",
+                "definicion_ejemplo": "Aplicar un procedimiento a una tarea familiar (p. ej. dividir un número entero entre otro número entero, los dos con varios dígitos).",
+                "Preguntas_tipo": [
+                    "Al aplicar la fórmula [fórmula específica] a los siguientes datos, ¿cuál es el resultado?",
+                    "Siguiendo los pasos del manual, ¿cuál es la configuración correcta para [una tarea específica]?",
+                    "Calcula el valor de X usando el método de [método estándar]."
+                ]
+            },
+            "Implementar": {
+                "nombres_alternativos": "Utilizar",
+                "definicion_ejemplo": "Aplicar un procedimiento a una tarea no familiar (p. ej. usar la segunda ley de Newton en situaciones apropiadas).",
+                "Preguntas_tipo": [
+                    "Dado un nuevo escenario [descripción del escenario], ¿cuál es la aplicación correcta del principio de [principio general] para resolverlo?",
+                    "Para analizar el problema presentado, ¿qué herramienta se debe utilizar según el procedimiento?",
+                    "¿Cuál es el resultado de aplicar el procedimiento X a la nueva situación presentada?"
+                ]
+            }
+        }
+    },
+    "ANALIZAR": {
+        "definicion": "Despiezar el material en sus partes constituyentes y determinar cómo se relacionan esas partes entre sí y con una estructura o propósito generales.",
+        "subprocesos": {
+            "Diferenciar": {
+                "nombres_alternativos": "Discriminar, distinguir, focalizar, seleccionar",
+                "definicion_ejemplo": "Distinguir las partes relevantes de las irrelevantes o las partes importantes de las que no son importantes en un material presentado (p. ej. discriminar los datos relevantes y los irrelevantes en el enunciado de un problema matemático).",
+                "Preguntas_tipo": [
+                    "De la información proporcionada, ¿qué dato es irrelevante para resolver el problema?",
+                    "¿Cuál de las siguientes afirmaciones representa una opinión del autor, en lugar de un hecho objetivo?",
+                    "Identifica la premisa principal que sustenta el argumento del autor."
+                ]
+            },
+            "Organizar": {
+                "nombres_alternativos": "Buscar coherencia, integrar, estructurar, bosquejar",
+                "definicion_ejemplo": "Determinar cómo encajan o funcionan los elementos en una estructura (p. ej., en una descripción histórica, discriminar las evidencias en evidencias a favor y evidencias en contra de una explicación histórica particular).",
+                "Preguntas_tipo": [
+                    "¿Cómo se relaciona la idea presentada en el primer párrafo con la conclusión del texto?",
+                    "¿Cuál de las siguientes opciones describe la estructura argumentativa del autor (p. ej. causa-efecto, problema-solución)?",
+                    "¿Qué función cumple el [ejemplo/dato específico] dentro del argumento general?"
+                ]
+            },
+            "Atribuir": {
+                "nombres_alternativos": "Deconstruir",
+                "definicion_ejemplo": "Determinar los puntos de vista, prejuicios, valores o sesgos en un material presentado (p. ej. determinar el punto de vista del autor de un ensayo en términos de su perspectiva política).",
+                "Preguntas_tipo": [
+                    "¿Cuál es el propósito del autor al escribir este texto, según se infiere de sus argumentos?",
+                    "¿Qué perspectiva ideológica se evidencia en el argumento presentado?",
+                    "¿Qué sesgo es evidente en la forma en que el autor presenta los datos sobre [tema específico]?"
+                ]
+            }
+        }
+    },
+    "EVALUAR": {
+        "definicion": "Formular juicios con base en criterios o parámetros.",
+        "subprocesos": {
+            "Verificar": {
+                "nombres_alternativos": "Cotejar, detectar, monitorear, hacer pruebas",
+                "definicion_ejemplo": "Detectar inconsistencias o falacias en procesos o productos; determinar si un proceso o un producto presentan inconsistencias internas; detectar la eficacia de un proceso como fue implementado (p. ej. determinar si unas conclusiones científicas se derivan de los datos observados).",
+                "Preguntas_tipo": [
+                    "La conclusión del estudio es '[conclusión X]'. ¿Es esta conclusión válida y por qué, basándose en los datos presentados?",
+                    "El argumento del autor contiene una falacia. ¿Cuál es esa falacia y por qué se considera como tal?",
+                    "Se afirma que el procedimiento fue exitoso. ¿Es correcta esta afirmación y cuál es la evidencia que lo apoya o refuta?"
+                ]
+            },
+            "Criticar": {
+                "nombres_alternativos": "Juzgar [expresar acuerdos y desacuerdos, argumentar]",
+                "definicion_ejemplo": "Detectar inconsistencias en un producto con base en criterios externos, determinar si un producto tiene consistencia externa; determinar si un procedimiento es apropiado para tratar un problema dado (p. ej. juzgar cuál de dos métodos es el mejor para solucionar un problema).",
+                "Preguntas_tipo": [
+                    "Dada la afirmación '[afirmación a evaluar]', ¿cuál de las siguientes evidencias la sustenta y por qué?",
+                    "Al aplicar el criterio de [criterio externo], ¿es la solución propuesta aceptable y cuál es el fundamento para esta decisión?",
+                    "El método A se eligió sobre el método B. ¿Fue esta una elección correcta, considerando [un estándar o regla específica], y por qué?"
+                ]
+            }
+        }
+    },
+    "CREAR": {
+        "definicion": "Agrupar elementos para formar un todo coherente o funcional, reorganizar elementos en un patrón o estructura nuevos.",
+        "subprocesos": {
+            "Generar": {
+                "nombres_alternativos": "Formular hipótesis",
+                "definicion_ejemplo": "Formular hipótesis alternativas con base en criterios (p. ej. generar hipótesis para explicar un fenómeno observado).",
+                "Preguntas_tipo": [
+                    "A partir de los datos observados, ¿cuál de las siguientes es una hipótesis válida para investigar a continuación?",
+                    "Para explicar el fenómeno [X], ¿qué hipótesis se puede formular que sea consistente con los datos presentados?",
+                    "¿Qué predicción se deriva lógicamente de la hipótesis [hipótesis X]?"
+                ]
+            },
+            "Planear": {
+                "nombres_alternativos": "Diseñar",
+                "definicion_ejemplo": "Idear un procedimiento para ejecutar una tarea (p. ej. planear un artículo académico sobre un tema histórico particular).",
+                "Preguntas_tipo": [
+                    "Para diseñar un experimento que pruebe [hipótesis], ¿cuál de los siguientes es un paso necesario?",
+                    "Para solucionar el problema logístico descrito, ¿qué plan de acción incluye todos los componentes requeridos?",
+                    "Para un ensayo que busca [propósito], ¿qué estructura organiza lógicamente las ideas presentadas?"
+                ]
+            },
+            "Producir": {
+                "nombres_alternativos": "Construir",
+                "definicion_ejemplo": "Inventar un producto (p. ej. construir habitaciones para propósitos específicos).",
+                "Preguntas_tipo": [
+                    "Combinando los elementos [A, B y C], ¿cuál de las siguientes opciones representa un producto nuevo y funcional?",
+                    "¿Qué conclusión novedosa se puede construir al integrar las teorías de [autor A] y [autor B]?",
+                    "Para la campaña descrita, ¿qué eslogan comunica el mensaje central de [mensaje específico]?"
+                ]
+            }
+        }
+    }
+}
