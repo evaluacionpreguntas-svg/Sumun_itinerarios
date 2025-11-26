@@ -22,7 +22,11 @@ from dotenv import load_dotenv
 import numpy as np
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from vertexai.language_models import TextEmbeddingModel # Para los embeddings
-import fitz  # PyMuPDF
+import fitz  # PyMuPDF1
+from dotenv import load_dotenv
+import time
+
+load_dotenv()
 
 
 def parse_json_llm(s: str):
@@ -71,13 +75,18 @@ def load_bloom_taxonomy(file_path="bloom_taxonomy.json"):
 bloom_taxonomy_detallada = load_bloom_taxonomy()
 
 # --- REEMPLAZA ESTA FUNCIÓN ---
-def crear_indice_vectorial(paginas_texto):
+# Asegúrate de tener 'import time' al inicio de tu archivo
+
+def crear_indice_vectorial(textos_entrada):
     """
-    Convierte una lista de TEXTOS DE PÁGINA en chunks y vectores.
-    Procesa página por página para ahorrar RAM.
+    Convierte una lista de textos (chunks o páginas) en vectores.
+    Versión ROBUSTA: Maneja el error 429 con paciencia y reintentos (Backoff).
     """
     try:
+        # 1. Configuración inicial
         model = TextEmbeddingModel.from_pretrained("text-embedding-004")
+        
+        # Aunque ya vengan divididos, el splitter asegura que nada exceda el tamaño
         text_splitter = RecursiveCharacterTextSplitter(
             chunk_size=1000,
             chunk_overlap=100
@@ -85,36 +94,74 @@ def crear_indice_vectorial(paginas_texto):
         
         index = []
         
-        # --- AQUÍ ESTÁ EL CAMBIO ---
-        # Reducimos el tamaño del lote de 250 a 100.
-        # Esto asegura que no superemos el límite de 20k tokens por llamada.
-        api_batch_size = 100 
-        # --- FIN DEL CAMBIO ---
+        # --- ESTRATEGIA ANTI-BLOQUEO ---
+        # 5 chunks es un número seguro para cuentas gratuitas/básicas.
+        api_batch_size = 5 
+        
+        # 2. Pre-procesamiento: Aseguramos que todo sea una lista plana de chunks
+        todos_los_chunks = []
+        for texto in textos_entrada:
+            # Si el texto ya es pequeño, el splitter lo deja igual, si es grande, lo corta
+            sub_chunks = text_splitter.split_text(texto)
+            todos_los_chunks.extend(sub_chunks)
 
-        # Iteramos sobre CADA PÁGINA individualmente
-        for texto_pagina in paginas_texto:
-            # 1. Dividimos solo el texto de ESTA página
-            chunks_pagina = text_splitter.split_text(texto_pagina)
+        total_chunks = len(todos_los_chunks)
+        if total_chunks == 0:
+            return []
+
+        # Barra de progreso visible
+        progreso_bar = st.progress(0, text=f"Iniciando vectorización de {total_chunks} fragmentos...")
+
+        # 3. Procesamiento por lotes con Reintentos (Backoff)
+        for i in range(0, total_chunks, api_batch_size):
             
-            if not chunks_pagina:
-                continue
+            # Definir el lote actual
+            fin_lote = min(i + api_batch_size, total_chunks)
+            batch_chunks = todos_los_chunks[i:fin_lote]
             
-            # 2. Vectorizamos los chunks de ESTA página (en lotes si es necesario)
-            for i in range(0, len(chunks_pagina), api_batch_size):
-                batch_chunks = chunks_pagina[i:i + api_batch_size]
-                embeddings = model.get_embeddings(batch_chunks)
-                
-                for chunk, embedding in zip(batch_chunks, embeddings):
-                    index.append((chunk, np.array(embedding.values)))
+            # Cálculo de progreso visual
+            progreso_actual = fin_lote / total_chunks
+            progreso_bar.progress(progreso_actual, text=f"Vectorizando... ({fin_lote}/{total_chunks})")
+
+            # --- LÓGICA DE REINTENTO (AQUÍ ESTÁ LA MAGIA) ---
+            max_intentos = 5
+            tiempo_espera = 5 # Empezamos esperando 5 segundos si falla
             
-            # 3. Al final de este bucle, 'texto_pagina' y 'chunks_pagina' se liberan
-            # de la memoria antes de procesar la siguiente página.
-    
+            for intento in range(max_intentos):
+                try:
+                    # Intentamos llamar a Google
+                    embeddings = model.get_embeddings(batch_chunks)
+                    
+                    # Si funciona, guardamos y ROMPEMOS el bucle de intentos (break)
+                    for chunk, embedding in zip(batch_chunks, embeddings):
+                        index.append((chunk, np.array(embedding.values)))
+                    
+                    # Pausa de cortesía para "enfriar" la API antes del siguiente lote
+                    time.sleep(1) 
+                    break 
+                    
+                except Exception as e:
+                    error_msg = str(e)
+                    # Si es error de cuota (429)
+                    if "429" in error_msg or "Quota exceeded" in error_msg:
+                        if intento < max_intentos - 1:
+                            st.toast(f"🐢 Tráfico alto. Esperando {tiempo_espera}s...", icon="⏳")
+                            time.sleep(tiempo_espera)
+                            tiempo_espera *= 2 # Duplicamos el tiempo (5s -> 10s -> 20s...)
+                        else:
+                            st.error("❌ Se agotaron los reintentos. Google está rechazando las peticiones.")
+                            raise e # Fallo definitivo tras 5 intentos
+                    else:
+                        # Si es otro error (ej. red), fallamos normal
+                        st.error(f"Error desconocido: {e}")
+                        raise e
+
+        progreso_bar.empty()
+        st.success(f"¡Éxito! {len(index)} fragmentos indexados correctamente.")
         return index
-    
+        
     except Exception as e:
-        # ¡Este es el error que estás viendo ahora!
-        st.error(f"Error al crear vectores (Embeddings): {e}")
+        st.error(f"Error fatal al crear vectores: {e}")
         return []
 
 def buscar_en_indice(query_text, k=3):
@@ -222,21 +269,19 @@ def describir_imagen_con_llm(model_name, image_bytes, file_type):
 
 def extraer_texto_pdf(pdf_bytes):
     """
-    Extrae texto de un PDF en bytes USANDO PyMuPDF (fitz),
-    que es mucho más rápido y robusto que PyPDF2.
+    Toma los bytes del PDF y devuelve UN solo string gigante con todo el texto.
     """
+    texto_final = ""
     try:
-        texto_pdf = ""
-        # Abrir el PDF desde los bytes en memoria
+        # Abre el PDF desde la memoria (sin guardarlo en disco)
         with fitz.open(stream=pdf_bytes, filetype="pdf") as doc:
             for page in doc:
-                # .get_text() es el método de PyMuPDF
-                texto_pdf += page.get_text() + "\n\n" 
-        return texto_pdf
+                # Extrae el texto de la página y añade un salto de línea
+                texto_final += page.get_text() + "\n"
+        return texto_final
     except Exception as e:
-        # Aún mantenemos el st.error por si el PDF está dañado
-        st.error(f"Error al leer el PDF con PyMuPDF: {e}")
-        return None
+        st.error(f"Error al leer PDF: {e}")
+        return ""
 
 
 
@@ -610,7 +655,8 @@ def main():
                                          informacion_adicional_usuario="",
                                          prompt_bloom_adicional="", prompt_construccion_adicional="", prompt_especifico_adicional="",
                                          prompt_auditor_adicional="",
-                                         contexto_general_macrohabilidad="", contexto_del_libro="",  feedback_usuario="", item_a_refinar_text="", descripcion_imagen_aprobada=""):
+                                         contexto_general_macrohabilidad="", contexto_del_libro="",  feedback_usuario="", item_a_refinar_text="", descripcion_imagen_aprobada="",
+                                         contextos_previos=None):
         """
         Genera una pregunta educativa de opción múltiple usando el modelo de generación seleccionado
         y la itera para refinarla si la auditoría lo requiere.
@@ -810,200 +856,218 @@ def main():
         --- CONTEXTO PRINCIPAL DEL LIBRO GUÍA (¡USO OBLIGATORIO!) ---
         ¡INSTRUCCIÓN CRÍTICA! Debes basar tu pregunta, opciones y justificaciones **principalmente** en los siguientes extractos del libro guía. La respuesta correcta DEBE poder deducirse de este texto.
         
-        {contexto_del_libro}
-        ---------------------------------------------------------
+                {contexto_del_libro}
+                ---------------------------------------------------------
+                """
+                        
+                seccion_contextos_previos = ""
+                if contextos_previos:
+                    lista_contextos = "\n".join([f"- {contexto}" for contexto in contextos_previos])
+                    seccion_contextos_previos = f"""
+        --- CONTEXTOS PREVIAMENTE UTILIZADOS ---
+        Ya se han generado ítems basados en las siguientes secciones o ideas del texto guía. 
+        Para fomentar la variedad, INTENTA NO BASAR este nuevo ítem principalmente en estos mismos contextos.
+        Busca otras secciones o ideas en el "CONTEXTO PRINCIPAL DEL LIBRO GUÍA".
+        Si es absolutamente necesario porque no hay más opciones, puedes reutilizar un contexto, pero intenta darle un enfoque diferente.
+        
+        Contextos a evitar si es posible:
+        {lista_contextos}
+        -------------------------------------------
         """
-                #
+
                 seccion_imagen = ""
                 if descripcion_imagen_aprobada:
                     seccion_imagen = f"""
-    --- INFORMACIÓN VISUAL OBLIGATORIA (BASADA EN IMAGEN) ---
-    ¡INSTRUCCIÓN CRÍTICA! El ítem que construyas DEBE basarse directamente en la siguiente descripción de una imagen. La pregunta, las opciones y las justificaciones deben hacer referencia a los detalles mencionados aquí. Este es el insumo principal.
-    
-    DESCRIPCIÓN DE LA IMAGEN:
-    "{descripcion_imagen_aprobada}"
-    ---------------------------------------------------------
-    """
-    
+            --- INFORMACIÓN VISUAL OBLIGATORIA (BASADA EN IMAGEN) ---
+            ¡INSTRUCCIÓN CRÍTICA! El ítem que construyas DEBE basarse directamente en la siguiente descripción de una imagen. La pregunta, las opciones y las justificaciones deben hacer referencia a los detalles mencionados aquí. Este es el insumo principal.
+            
+            DESCRIPCIÓN DE LA IMAGEN:
+            "{descripcion_imagen_aprobada}"
+            ---------------------------------------------------------
+            """
+            
                 prompt_content_for_llm = f"""
-                Eres un psicómetra y diseñador experto en ítems de evaluación educativa, con profundo conocimiento en la Taxonomía de Bloom y su aplicación práctica.
-                Tu tarea es construir un ítem de {tipo_pregunta} con una única respuesta correcta, garantizando una alineación perfecta y demostrable con el marco cognitivo solicitado, siguiendo un riguroso proceso de análisis previo.
-                
-                --- CONTEXTO Y PARÁMETROS DEL ÍTEM ---
-                - Grado: {grado_elegido}
-                - Área: {area_elegida}
-                - Asignatura: {asignatura_elegida}
-                - Macrohabilidad o unidad temática: {macrohabilidad_elegida}
-                - Proceso cognitivo (Taxonomía de Bloom): {proceso_cognitivo_elegido}
-                - Descripción DETALLADA y VINCULANTE del proceso cognitivo:
-                    "{descripcion_bloom}"
-
-                --- EJEMPLOS Y GUÍAS DE PREGUNTAS (Preguntas Tipo) ---
-                ¡INSTRUCCIÓN CLAVE! Para asegurar que el enunciado del ítem se alinee con el proceso cognitivo, inspírate en los siguientes ejemplos. La pregunta que formules debe seguir un estilo similar, buscando una única respuesta correcta y evitando comparaciones subjetivas ("mejor", "más adecuado").
-                {ejemplos_preguntas}
-                ----------------------------------------------------
-                
-                --- PROMPT ADICIONAL: TAXONOMÍA DE BLOOM / PROCESOS COGNITIVOS ---
-                {prompt_bloom_adicional if prompt_bloom_adicional else "No se proporcionaron prompts adicionales específicos para taxonomía de Bloom."}
-                ------------------------------------------------------------------
-                
-                - Microhabilidad (foco principal del ítem): {microhabilidad_elegida}
-                - Nivel educativo esperado del estudiante: {contexto_educativo}
-                - Nivel de dificultad deseado: {dificultad}
-                
-                {instruccion_contexto}
-
-                {seccion_imagen}
-
-                {seccion_contexto_libro}
-
-                # =============================================================================
-                # INICIO DE LA MODIFICACIÓN CLAVE: ANÁLISIS COGNITIVO OBLIGATORIO Y EXCLUSIVO
-                # =============================================================================
-                --- ANÁLISIS COGNITIVO OBLIGATORIO (TAXONOMÍA DE BLOOM) ---
-                Antes de escribir el ítem, DEBES realizar el siguiente análisis interno para garantizar una alineación perfecta. La calidad de tu pregunta dependerá de la rigurosidad de este análisis.
-                
-                1.  **Deconstrucción del Proceso Cognitivo**: Revisa la "Descripción DETALLADA y VINCULANTE del proceso cognitivo" proporcionada. Es de carácter **obligatorio** que extraigas de ella el subproceso y los **verbos de acción clave** o sinónimos directos que mejor se alineen con la microhabilidad '{microhabilidad_elegida}'.
-                
-                2.  **Diseño de la Tarea Cognitiva**: Describe la tarea mental específica y observable que el estudiante DEBE realizar. **Esta descripción debe incorporar explícitamente los verbos de acción (o sus sinónimos directos) que identificaste en el paso anterior.** No describas la pregunta, sino la operación mental. (Ej: "La tarea exige que el estudiante *compare* dos eventos históricos para *detectar correspondencias* entre sus causas económicas, y luego *construya un modelo* simple de causa-efecto que *explique* esas similitudes.").
-                
-                3.  **Justificación de la Alineación**: Justifica explícitamente cómo la "Tarea Cognitiva" que diseñaste se alinea con la definición del proceso "{proceso_cognitivo_elegido}" y su subproceso. (Ej: "Esta tarea se alinea con COMPRENDER-Comparar y Explicar porque el estudiante debe procesar información, detectar relaciones y construir un modelo causal, lo cual va más allá de solo recordar los hechos.").
-                
-                4.  **Verificación de Exclusividad Cognitiva (¡CRÍTICO!)**: Debes confirmar que la tarea diseñada NO pertenece a otros niveles cognitivos. Justifica brevemente por qué la tarea:
-                    * **Supera el nivel anterior**: Explica por qué la tarea es más compleja que el nivel cognitivo inmediatamente inferior en la taxonomía. (Ej: "No es solo RECORDAR porque no se pide evocar fechas, sino relacionarlas.").
-                    * **No alcanza el nivel superior**: Explica por qué la tarea no llega a la complejidad del nivel cognitivo inmediatamente superior. (Ej: "No es ANALIZAR porque no se le pide que deconstruya la validez de las fuentes de información o que determine sesgos, solo que organice y explique la información presentada.").
-                
-                La pregunta que construirás a continuación debe ser la materialización exacta de esta Tarea Cognitiva verificada.
-                # =============================================================================
-                # FIN DE LA MODIFICACIÓN CLAVE
-                # =============================================================================
-                
-                --- INSTRUCCIONES PARA LA CONSTRUCCIÓN DEL ÍTEM ---
-                CONTEXTO DEL ÍTEM:
-                - Debe ser relevante y plausible, sirviendo como el escenario donde se ejecutará la Tarea Cognitiva que diseñaste.
-                - La temática debe ser la de la {macrohabilidad_elegida} y ser central para el problema.
-                - Evita referencias a marcas, nombres propios, lugares reales o información personal identificable.
-                
-                ENUNCIADO:
-                - **CRÍTICO**: Formula una pregunta que fuerce al estudiante a ejecutar la Tarea Cognitiva que definiste y verificaste en tu análisis. El enunciado es el disparador de esa operación mental.
-                - Formula una pregunta clara, directa, sin ambigüedades ni tecnicismos innecesarios.
-                - ¡INSTRUCCIÓN CRÍTICA DE ESTILO! Evita terminantemente formular preguntas que pidan al estudiante comparar o jerarquizar opciones. **NO USES** frases como "¿cuál es la opción más...", "¿cuál es el mejor...", "¿cuál describe principalmente...?", "¿cuál es la razón principal...?". La pregunta debe tener una única respuesta objetivamente correcta.
-                - En su lugar, formula preguntas directas como: "**¿Cuál es la causa de...?**", "**¿Qué conclusión se deriva de...?**", "**¿Cuál de las afirmaciones es correcta?**".
-                - NO uses directamente en la pregunta el verbo principal del proceso cognitivo (ej. no preguntes "¿Cuál es el análisis de...?"). Busca redacciones más auténticas.
-                - Si utilizas negaciones, resáltalas en MAYÚSCULAS Y NEGRITA (por ejemplo: **NO ES**, **EXCEPTO**).
-                
-                OPCIONES DE RESPUESTA:
-                - Escribe exactamente cuatro opciones (A, B, C y D).
-                - **Opción Correcta**: Debe ser la única conclusión válida tras ejecutar correctamente la Tarea Cognitiva.
-                - La respuesta correcta DEBE ser la opción {clave_aleatoria}.
-                - **Distractores (Incorrectos)**: Deben ser plausibles y diseñados a partir de errores típicos en la ejecución de la Tarea Cognitiva. (Ej: un distractor podría ser el resultado de aplicar un proceso cognitivo inferior, como simplemente recordar un dato, en lugar de analizarlo).
-                - Las respuestas deben tener una estructura gramatical y longitud similares.
-                - No utilices fórmulas vagas como “ninguna de las anteriores” o “todas las anteriores”.
-                
-                JUSTIFICACIONES:
-                {formato_justificacion}
-    
-                --- PROMPT ADICIONAL: REGLAS GENERALES DE CONSTRUCCIÓN ---
-                {prompt_construccion_adicional if prompt_construccion_adicional else "No se proporcionaron prompts adicionales específicos para reglas generales de construcción."}
-                ---------------------------------------------------------
-    
-                --- REGLAS ADICIONALES DEL MANUAL DE CONSTRUCCIÓN ---
-                Considera y aplica estrictamente todas las directrices, ejemplos y restricciones contenidas en el siguiente manual.
-                Esto es de suma importancia para la calidad y pertinencia del ítem.
-    
-                Manual de Reglas:
-                {manual_reglas_texto}
-                ----------------------------------------------------
-    
-                --- INFORMACIÓN ADICIONAL PROPORCIONADA POR EL USUARIO (Contexto General) ---
-                {informacion_adicional_usuario if informacion_adicional_usuario else "No se proporcionó información adicional general."}
-                ---------------------------------------------------------------------------
-                
-                --- PROMPT ADICIONAL: COSAS ESPECÍFICAS A TENER EN CUENTA ---
-                {prompt_especifico_adicional if prompt_especifico_adicional else "No se proporcionaron prompts adicionales específicos para consideraciones adicionales."}
-                ----------------------------------------------------------
-    
-                --- DATO CLAVE PARA LA CONSTRUCCIÓN ---
-                Basado en el foco temático y el proceso cognitivo, considera el siguiente dato o idea esencial:
-                "{dato_para_pregunta_foco}"
-    
-                --- INSTRUCCIONES ESPECÍFICAS DE SALIDA PARA GRÁFICO ---
-                Después del bloque de JUSTIFICACIONES, indica si el ítem necesita elementos visuales.
-                
-                ¡INSTRUCCIÓN CRÍTICA! **Considera como elemento visual cualquier cosa que no sea texto de prosa**, incluyendo: gráficos, diagramas, **tablas**, construcciones geométricas, etc.
-                
-                GRAFICO_NECESARIO: [SÍ/NO]
-                DESCRIPCION_GRAFICO: [Si la respuesta es **NO**, escribe **N/A**. Si la respuesta es **SÍ**, DEBES proporcionar una **LISTA DE OBJETOS JSON VÁLIDOS** incluso si solo hay un gráfico, siguiendo estas reglas:]
-                El JSON siempre debe contener los campos: `"ubicacion"`, `"tipo_elemento"`, `"datos"`, `"configuracion"` y `"descripcion"`.
-
-                1. Cada objeto DEBE contener una clave `"ubicacion"` para identificar dónde va el gráfico. Usa uno de los siguientes valores: `"enunciado"`, `"opcion_a"`, `"opcion_b"`, `"opcion_c"`, `"opcion_d"`.
-                
-                2.  Para `"tipo_elemento"`, elige **UNO** de la siguiente lista: `grafico_barras_verticales`, `grafico_circular`, `tabla`, `construccion_geometrica`, `diagrama_arbol`, `flujograma`, `pictograma`, `scatter_plot`, `line_plot`, `histogram`, `box_plot`, `violin_plot`, `heatmap`, `contour_plot`, `3d_plot`, `network_diagram`, `area_plot`, `radar_chart`, `venn_diagram`, `fractal`, `otro_tipo`.
-                
-                3.  Para `"descripcion"`, proporciona un **texto en lenguaje natural que resuma y detalle todos los elementos clave del gráfico**, sus relaciones y las características que se deben tener en cuenta para generarlo visualmente.
-                
-                4.  **LÓGICA CONDICIONAL PARA EL CAMPO "datos":**
-                    * **Si eliges un `tipo_elemento` de la lista (QUE NO SEA `otro_tipo`)**: El campo `"datos"` debe ser un objeto con la **información estructurada y numérica**.
-                        * *Ejemplo para `tabla`*:
-                        ```json
+                        Eres un psicómetra y diseñador experto en ítems de evaluación educativa, con profundo conocimiento en la Taxonomía de Bloom y su aplicación práctica.
+                        Tu tarea es construir un ítem de {tipo_pregunta} con una única respuesta correcta, garantizando una alineación perfecta y demostrable con el marco cognitivo solicitado, siguiendo un riguroso proceso de análisis previo.
+                        
+                        --- CONTEXTO Y PARÁMETROS DEL ÍTEM ---
+                        - Grado: {grado_elegido}
+                        - Área: {area_elegida}
+                        - Asignatura: {asignatura_elegida}
+                        - Macrohabilidad o unidad temática: {macrohabilidad_elegida}
+                        - Proceso cognitivo (Taxonomía de Bloom): {proceso_cognitivo_elegido}
+                        - Descripción DETALLADA y VINCULANTE del proceso cognitivo:
+                            "{descripcion_bloom}"
+        
+                        --- EJEMPLOS Y GUÍAS DE PREGUNTAS (Preguntas Tipo) ---
+                        ¡INSTRUCCIÓN CLAVE! Para asegurar que el enunciado del ítem se alinee con el proceso cognitivo, inspírate en los siguientes ejemplos. La pregunta que formules debe seguir un estilo similar, buscando una única respuesta correcta y evitando comparaciones subjetivas ("mejor", "más adecuado").
+                        {ejemplos_preguntas}
+                        ----------------------------------------------------
+                        
+                        --- PROMPT ADICIONAL: TAXONOMÍA DE BLOOM / PROCESOS COGNITIVOS ---
+                        {prompt_bloom_adicional if prompt_bloom_adicional else "No se proporcionaron prompts adicionales específicos para taxonomía de Bloom."}
+                        ------------------------------------------------------------------
+                        
+                        - Microhabilidad (foco principal del ítem): {microhabilidad_elegida}
+                        - Nivel educativo esperado del estudiante: {contexto_educativo}
+                        - Nivel de dificultad deseado: {dificultad}
+                        
+                        {instruccion_contexto}
+        
+                        {seccion_imagen}
+        
+                        {seccion_contexto_libro}
+        
+                        {seccion_contextos_previos}
+        
+                        # =============================================================================
+                        # INICIO DE LA MODIFICACIÓN CLAVE: ANÁLISIS COGNITIVO OBLIGATORIO Y EXCLUSIVO
+                        # =============================================================================
+                        --- ANÁLISIS COGNITIVO OBLIGATORIO (TAXONOMÍA DE BLOOM) ---
+                        Antes de escribir el ítem, DEBES realizar el siguiente análisis interno para garantizar una alineación perfecta. La calidad de tu pregunta dependerá de la rigurosidad de este análisis.
+                        
+                        1.  **Deconstrucción del Proceso Cognitivo**: Revisa la "Descripción DETALLADA y VINCULANTE del proceso cognitivo" proporcionada. Es de carácter **obligatorio** que extraigas de ella el subproceso y los **verbos de acción clave** o sinónimos directos que mejor se alineen con la microhabilidad '{microhabilidad_elegida}'.
+                        
+                        2.  **Diseño de la Tarea Cognitiva**: Describe la tarea mental específica y observable que el estudiante DEBE realizar. **Esta descripción debe incorporar explícitamente los verbos de acción (o sus sinónimos directos) que identificaste en el paso anterior.** No describas la pregunta, sino la operación mental. (Ej: "La tarea exige que el estudiante *compare* dos eventos históricos para *detectar correspondencias* entre sus causas económicas, y luego *construya un modelo* simple de causa-efecto que *explique* esas similitudes.").
+                        
+                        3.  **Justificación de la Alineación**: Justifica explícitamente cómo la "Tarea Cognitiva" que diseñaste se alinea con la definición del proceso "{proceso_cognitivo_elegido}" y su subproceso. (Ej: "Esta tarea se alinea con COMPRENDER-Comparar y Explicar porque el estudiante debe procesar información, detectar relaciones y construir un modelo causal, lo cual va más allá de solo recordar los hechos.").
+                        
+                        4.  **Verificación de Exclusividad Cognitiva (¡CRÍTICO!)**: Debes confirmar que la tarea diseñada NO pertenece a otros niveles cognitivos. Justifica brevemente por qué la tarea:
+                            * **Supera el nivel anterior**: Explica por qué la tarea es más compleja que el nivel cognitivo inmediatamente inferior en la taxonomía. (Ej: "No es solo RECORDAR porque no se pide evocar fechas, sino relacionarlas.").
+                            * **No alcanza el nivel superior**: Explica por qué la tarea no llega a la complejidad del nivel cognitivo inmediatamente superior. (Ej: "No es ANALIZAR porque no se le pide que deconstruya la validez de las fuentes de información o que determine sesgos, solo que organice y explique la información presentada.").
+                        
+                        La pregunta que construirás a continuación debe ser la materialización exacta de esta Tarea Cognitiva verificada.
+                        # =============================================================================
+                        # FIN DE LA MODIFICACIÓN CLAVE
+                        # =============================================================================
+                        
+                        --- INSTRUCCIONES PARA LA CONSTRUCCIÓN DEL ÍTEM ---
+                        CONTEXTO DEL ÍTEM:
+                        - Debe ser relevante y plausible, sirviendo como el escenario donde se ejecutará la Tarea Cognitiva que diseñaste.
+                        - La temática debe ser la de la {macrohabilidad_elegida} y ser central para el problema.
+                        - Evita referencias a marcas, nombres propios, lugares reales o información personal identificable.
+                        
+                        ENUNCIADO:
+                      	- **CRÍTICO**: Formula una pregunta que fuerce al estudiante a ejecutar la Tarea Cognitiva que definiste y verificaste en tu análisis. El enunciado es el disparador de esa operación mental.
+                      	- **ABSTRACCIÓN DEL CONTENIDO (¡MUY IMPORTANTE!)**: Aunque te bases en el 'CONTEXTO PRINCIPAL DEL LIBRO GUÍA', el enunciado, el contexto que generes y las opciones **NO DEBEN** hacer referencia explícita al libro, al texto, al autor, a la página o a cualquier elemento meta-textual (ej: "Según el texto...", "En el fragmento se menciona que...", "El autor sugiere que..."). La pregunta debe ser **autocontenida**. Debes presentar la información del libro como si fuera un hecho del mundo real, no como una cita de una fuente.
+                        - Formula una pregunta clara, directa, sin ambigüedades ni tecnicismos innecesarios.
+                        - ¡INSTRUCCIÓN CRÍTICA DE ESTILO! Evita terminantemente formular preguntas que pidan al estudiante comparar o jerarquizar opciones. **NO USES** frases como "¿cuál es la opción más...", "¿cuál es el mejor...", "¿cuál describe principalmente...?", "¿cuál es la razón principal...?". La pregunta debe tener una única respuesta objetivamente correcta.
+                        - En su lugar, formula preguntas directas como: "**¿Cuál es la causa de...?**", "**¿Qué conclusión se deriva de...?**", "**¿Cuál de las afirmaciones es correcta?**".
+          	 	- NO uses directamente en la pregunta el verbo principal del proceso cognitivo (ej. no preguntes "¿Cuál es el análisis de...?"). Busca redacciones más auténticas.
+          	 	- Si utilizas negaciones, resáltalas en MAYÚSCULAS Y NEGRITA (por ejemplo: **NO ES**, **EXCEPTO**).
+                        
+                        OPCIONES DE RESPUESTA:
+                        - Escribe exactamente cuatro opciones (A, B, C y D).
+                        - **Opción Correcta**: Debe ser la única conclusión válida tras ejecutar correctamente la Tarea Cognitiva.
+                        - La respuesta correcta DEBE ser la opción {clave_aleatoria}.
+                        - **Distractores (Incorrectos)**: Deben ser plausibles y diseñados a partir de errores típicos en la ejecución de la Tarea Cognitiva. (Ej: un distractor podría ser el resultado de aplicar un proceso cognitivo inferior, como simplemente recordar un dato, en lugar de analizarlo).
+                        - Las respuestas deben tener una estructura gramatical y longitud similares.
+                        - No utilices fórmulas vagas como “ninguna de las anteriores” o “todas las anteriores”.
+                        
+                        JUSTIFICACIONES:
+                        {formato_justificacion}
+            
+                        --- PROMPT ADICIONAL: REGLAS GENERALES DE CONSTRUCCIÓN ---
+                        {prompt_construccion_adicional if prompt_construccion_adicional else "No se proporcionaron prompts adicionales específicos para reglas generales de construcción."}
+                        ---------------------------------------------------------
+            
+                        --- REGLAS ADICIONALES DEL MANUAL DE CONSTRUCCIÓN ---
+                        Considera y aplica estrictamente todas las directrices, ejemplos y restricciones contenidas en el siguiente manual.
+                        Esto es de suma importancia para la calidad y pertinencia del ítem.
+            
+                        Manual de Reglas:
+                        {manual_reglas_texto}
+                        ----------------------------------------------------
+            
+                        --- INFORMACIÓN ADICIONAL PROPORCIONADA POR EL USUARIO (Contexto General) ---
+                        {informacion_adicional_usuario if informacion_adicional_usuario else "No se proporcionó información adicional general."}
+                        ---------------------------------------------------------------------------
+                        
+                        --- PROMPT ADICIONAL: COSAS ESPECÍFICAS A TENER EN CUENTA ---
+                        {prompt_especifico_adicional if prompt_especifico_adicional else "No se proporcionaron prompts adicionales específicos para consideraciones adicionales."}
+                        ----------------------------------------------------------
+            
+                        --- DATO CLAVE PARA LA CONSTRUCCIÓN ---
+                        Basado en el foco temático y el proceso cognitivo, considera el siguiente dato o idea esencial:
+                        "{dato_para_pregunta_foco}"
+            
+                        --- INSTRUCCIONES ESPECÍFICAS DE SALIDA PARA GRÁFICO ---
+                        Después del bloque de JUSTIFICACIONES, indica si el ítem necesita elementos visuales.
+                        
+                        ¡INSTRUCCIÓN CRÍTICA! **Considera como elemento visual cualquier cosa que no sea texto de prosa**, incluyendo: gráficos, diagramas, **tablas**, construcciones geométricas, etc.
+                        
+                        GRAFICO_NECESARIO: [SÍ/NO]
+                        DESCRIPCION_GRAFICO: [Si la respuesta es **NO**, escribe **N/A**. Si la respuesta es **SÍ**, DEBES proporcionar una **LISTA DE OBJETOS JSON VÁLIDOS** incluso si solo hay un gráfico, siguiendo estas reglas:]
+                        El JSON siempre debe contener los campos: `"ubicacion"`, `"tipo_elemento"`, `"datos"`, `"configuracion"` y `"descripcion"`.
+        
+                        1. Cada objeto DEBE contener una clave `"ubicacion"` para identificar dónde va el gráfico. Usa uno de los siguientes valores: `"enunciado"`, `"opcion_a"`, `"opcion_b"`, `"opcion_c"`, `"opcion_d"`.
+                        
+                        2.  Para `"tipo_elemento"`, elige **UNO** de la siguiente lista: `grafico_barras_verticales`, `grafico_circular`, `tabla`, `construccion_geometrica`, `diagrama_arbol`, `flujograma`, `pictograma`, `scatter_plot`, `line_plot`, `histogram`, `box_plot`, `violin_plot`, `heatmap`, `contour_plot`, `3d_plot`, `network_diagram`, `area_plot`, `radar_chart`, `venn_diagram`, `fractal`, `otro_tipo`.
+                        
+                        3.  Para `"descripcion"`, proporciona un **texto en lenguaje natural que resuma y detalle todos los elementos clave del gráfico**, sus relaciones y las características que se deben tener en cuenta para generarlo visualmente.
+                        
+                        4.  **LÓGICA CONDICIONAL PARA EL CAMPO "datos":**
+                            * **Si eliges un `tipo_elemento` de la lista (QUE NO SEA `otro_tipo`)**: El campo `"datos"` debe ser un objeto con la **información estructurada y numérica**.
+                                * *Ejemplo para `tabla`*:
+                                ```json
+                                {{
+                                  "ubicacion": "enunciado",
+                                  "tipo_elemento": "tabla",
+                                  "datos": {{
+                                    "columnas": ["País", "Capital"],
+                                    "filas": [["Colombia", "Bogotá"], ["Argentina", "Buenos Aires"]]
+                                  }},
+                                  "configuracion": {{ "titulo": "Capitales de Sudamérica" }},
+                                  "descripcion": "Una tabla de dos columnas que lista países sudamericanos y sus respectivas capitales. La primera columna corresponde al país y la segunda a su capital."
+                                }}
+                                ```
+                            * **Si el gráfico no corresponde a ninguno y eliges `otro_tipo`**: El campo `"datos"` debe contener un único objeto con la clave `"descripcion_natural"`, cuyo valor será un **texto exhaustivo** con todos los detalles necesarios para construir el gráfico desde cero.
+                                * *Ejemplo para `otro_tipo`*:
+                                ```json
+                                {{
+                                  "ubicacion": "opcion_a",
+                                  "tipo_elemento": "otro_tipo",
+                                  "datos": {{
+                                    "descripcion_natural": "Se requiere un diagrama de un circuito eléctrico simple en serie. Debe mostrar una fuente de poder (batería) de 9V conectada a tres resistencias (R1=10Ω, R2=20Ω, R3=30Ω) una después de la otra. El diagrama debe indicar claramente la dirección del flujo de la corriente (I) con una flecha saliendo del polo positivo de la batería."
+                                  }},
+                                  "configuracion": {{ "titulo": "Circuito en Serie" }},
+                                  "descripcion": "Diagrama de un circuito eléctrico simple con una batería y tres resistencias conectadas en serie, mostrando el flujo de la corriente."
+                                }}
+                                ```
+         
+                        --- FORMATO ESPERADO DE SALIDA ---
+                      	¡INSTRUCCIÓN CRÍTICA! Tu respuesta DEBE ser un único bloque de código JSON válido, sin ningún otro texto o explicación antes o después (no uses \`\`\`json).
+          	 	 	El objeto JSON debe tener la siguiente estructura:              
                         {{
-                          "ubicacion": "enunciado",
-                          "tipo_elemento": "tabla",
-                          "datos": {{
-                            "columnas": ["País", "Capital"],
-                            "filas": [["Colombia", "Bogotá"], ["Argentina", "Buenos Aires"]]
+                          "pregunta": "Aquí va el texto del contexto (si lo hay) seguido del enunciado de la pregunta.",
+                          "opciones": {{
+                            "A": "Texto de la opción A.",
+                            "B": "Texto de la opción B.",
+                            "C": "Texto de la opción C.",
+                            "D": "Texto de la opción D."
                           }},
-                          "configuracion": {{ "titulo": "Capitales de Sudamérica" }},
-                          "descripcion": "Una tabla de dos columnas que lista países sudamericanos y sus respectivas capitales. La primera columna corresponde al país y la segunda a su capital."
-                        }}
-                        ```
-                    * **Si el gráfico no corresponde a ninguno y eliges `otro_tipo`**: El campo `"datos"` debe contener un único objeto con la clave `"descripcion_natural"`, cuyo valor será un **texto exhaustivo** con todos los detalles necesarios para construir el gráfico desde cero.
-                        * *Ejemplo para `otro_tipo`*:
-                        ```json
-                        {{
-                          "ubicacion": "opcion_a",
-                          "tipo_elemento": "otro_tipo",
-                          "datos": {{
-                            "descripcion_natural": "Se requiere un diagrama de un circuito eléctrico simple en serie. Debe mostrar una fuente de poder (batería) de 9V conectada a tres resistencias (R1=10Ω, R2=20Ω, R3=30Ω) una después de la otra. El diagrama debe indicar claramente la dirección del flujo de la corriente (I) con una flecha saliendo del polo positivo de la batería."
+                          "respuestaCorrecta": "{clave_aleatoria}",
+                          "justificaciones": {{
+                            "A": "Justificación para la opción A.",
+                            "B": "Justificación para la opción B.",
+                            "C": "Justificación para la opción C.",
+                            "D": "Justificación para la opción D."
                           }},
-                          "configuracion": {{ "titulo": "Circuito en Serie" }},
-                          "descripcion": "Diagrama de un circuito eléctrico simple con una batería y tres resistencias conectadas en serie, mostrando el flujo de la corriente."
+                          "contexto_origen": "Describe brevemente la sección, estación o idea principal del texto guía que usaste como inspiración para este ítem.",
+                          "graficoNecesario": "SÍ",
+                          "descripcionGrafico": [
+                            {{
+                              "ubicacion": "enunciado",
+                              "tipo_elemento": "tabla",
+                              "datos": {{"columnas": ["X"], "filas": [[1]]}},
+                              "configuracion": {{"titulo": "Ejemplo"}},
+                              "descripcion": "Descripción del gráfico."
+                            }}
+                          ]
                         }}
-                        ```
- 
-                --- FORMATO ESPERADO DE SALIDA ---
-                ¡INSTRUCCIÓN CRÍTICA! Tu respuesta DEBE ser un único bloque de código JSON válido, sin ningún otro texto o explicación antes o después (no uses \`\`\`json).
-                El objeto JSON debe tener la siguiente estructura:              
-                {{
-                  "pregunta": "Aquí va el texto del contexto (si lo hay) seguido del enunciado de la pregunta.",
-                  "opciones": {{
-                    "A": "Texto de la opción A.",
-                    "B": "Texto de la opción B.",
-                    "C": "Texto de la opción C.",
-                    "D": "Texto de la opción D."
-                  }},
-                  "respuestaCorrecta": "{clave_aleatoria}",
-                  "justificaciones": {{
-                    "A": "Justificación para la opción A.",
-                    "B": "Justificación para la opción B.",
-                    "C": "Justificación para la opción C.",
-                    "D": "Justificación para la opción D."
-                  }},
-                  "graficoNecesario": "SÍ",
-                  "descripcionGrafico": [
-                    {{
-                      "ubicacion": "enunciado",
-                      "tipo_elemento": "tabla",
-                      "datos": {{"columnas": ["X"], "filas": [[1]]}},
-                      "configuracion": {{"titulo": "Ejemplo"}},
-                      "descripcion": "Descripción del gráfico."
-                    }}
-                  ]
-                }}
-
-                Asegúrate de que el valor de "respuestaCorrecta" sea exactamente "{clave_aleatoria}". Si "graficoNecesario" es "NO", el valor de "descripcionGrafico" debe ser un array vacío [].
-                """
-                
+        
+                      	Asegúrate de que el valor de "respuestaCorrecta" sea exactamente "{clave_aleatoria}". Si "graficoNecesario" es "NO", el valor de "descripcionGrafico" debe ser un array vacío [].
+                        """                
                 if attempt > 1:
                     prompt_content_for_llm += f"""
                     --- RETROALIMENTACIÓN DE AUDITORÍA PARA REFINAMIENTO ---
@@ -1062,16 +1126,18 @@ def main():
                         # El prompt ya pide que sea una lista de objetos, así que la obtenemos directamente
                         descripciones_graficos_list = item_data.get("descripcionGrafico", [])
                         descripcion_grafico = descripciones_graficos_list # Asignamos para la auditoría
+                        contexto_origen = item_data.get("contexto_origen", "") # EXTRAER EL NUEVO CAMPO
 
 
                     except json.JSONDecodeError:
                         # Si el LLM no devuelve un JSON válido, lo marcamos como un error de formato
                         auditoria_status = "❌ RECHAZADO (Error de Formato JSON)"
-                        audit_observations = f"El modelo de generación no produjo un JSON válido. Salida recibida:\n{full_llm_response}"
+                        audit_observations = f"El modelo de generación no produjo un JSON válido. Salida recibida:\n{full_ll-m_response}"
                         st.warning(audit_observations)
                         current_item_text = full_llm_response # Guardamos el texto erróneo para el reintento
                         grafico_necesario = "NO"
                         descripcion_grafico = ""
+                        contexto_origen = "" # Asegurarse que existe
                         # Forzamos la salida del bucle de reintentos si hay error de formato
                     # -- FIN DEL NUEVO BLOQUE DE PARSEO JSON --
                     
@@ -1108,6 +1174,7 @@ def main():
                         "classification": classification_details,
                         "grafico_necesario": grafico_necesario,
                         "descripciones_graficos": descripciones_graficos_list,
+                        "contexto_origen": contexto_origen, # GUARDAR EL NUEVO CAMPO
                         "final_audit_status": auditoria_status,
                         "final_audit_observations": audit_observations,
                         "generation_prompt_used": full_generation_prompt,
@@ -1432,55 +1499,39 @@ def main():
     st.sidebar.markdown("---")
     st.sidebar.header("Recurso Opcional (Libro)")
     
-    # Variable de sesión para el nombre del libro
+    # Inicializamos la variable donde vivirá el libro entero
+    if 'texto_libro_completo' not in st.session_state:
+        st.session_state['texto_libro_completo'] = ""
     if 'processed_pdf_name' not in st.session_state:
         st.session_state.processed_pdf_name = None
 
     pdf_itinerario = st.sidebar.file_uploader("Subir PDF del Itinerario/Libro", type="pdf")
-    #
+
     if pdf_itinerario:
-            # Si se sube un nuevo libro O es un libro diferente al procesado
-            if pdf_itinerario.name != st.session_state.processed_pdf_name:
-                
-                # 1. Primero, le decimos a Streamlit que TODO lo siguiente va en la barra lateral
-                with st.sidebar:
-                    # 2. AHORA llamamos al spinner normal, y aparecerá en la barra lateral
-                    with st.spinner(f"Procesando '{pdf_itinerario.name}'... Esto puede tardar unos minutos."):
-                
-                        # --- INICIO DE LA SECCIÓN CORREGIDA ---
-                        # Todo lo que sigue debe estar indentado a este nivel
-                        # para que ocurra DENTRO del 'with st.spinner'
-    
-                        # 1. Borramos el índice viejo (si existe)
-                        if 'pdf_index' in st.session_state:
-                            del st.session_state['pdf_index']
+        # Solo procesamos si es un archivo nuevo que no hemos leído aún
+        if pdf_itinerario.name != st.session_state.processed_pdf_name:
+            with st.sidebar:
+                with st.spinner(f"📖 Leyendo '{pdf_itinerario.name}' completo..."):
                     
-                        # 2. Procesamos el nuevo libro
-                        pdf_bytes = pdf_itinerario.getvalue()
-                        texto_completo = extraer_texto_pdf(pdf_bytes)
+                    # 1. Obtenemos los bytes
+                    pdf_bytes = pdf_itinerario.getvalue()
+                    
+                    # 2. Convertimos a TEXTO PLANO (Aquí ocurre la magia)
+                    texto_extraido = extraer_texto_pdf(pdf_bytes)
+                    
+                    if texto_extraido:
+                        # 3. Guardamos el texto gigante en la memoria de sesión
+                        st.session_state['texto_libro_completo'] = texto_extraido
+                        st.session_state.processed_pdf_name = pdf_itinerario.name
                         
-                        if texto_completo:
-                            # 3. Dividir (Chunking)
-                            text_splitter = RecursiveCharacterTextSplitter(
-                                chunk_size=1000, # 1000 caracteres por pedazo
-                                chunk_overlap=100  # 100 caracteres de superposición
-                            )
-                            chunks = text_splitter.split_text(texto_completo)
-                            
-                            # 4. Vectorizar (Embedding) y almacenar
-                            st.session_state['pdf_index'] = crear_indice_vectorial(chunks)
-                            st.session_state.processed_pdf_name = pdf_itinerario.name
-                            
-                            # Mostramos el éxito (aún dentro del 'with st.sidebar')
-                            st.sidebar.success(f"Libro '{pdf_itinerario.name}' procesado. {len(chunks)} secciones indexadas.")
-                        else:
-                            st.sidebar.error("El PDF está vacío o no se pudo leer.")
-                        # --- FIN DE LA SECCIÓN CORREGIDA ---
-    
-            # Si el libro es el mismo que ya está cargado, no hacemos nada
-            # y solo mostramos el mensaje de éxito.
-            elif 'pdf_index' in st.session_state:
-                 st.sidebar.success(f"Libro '{pdf_itinerario.name}' listo.")
+                        # Opcional: Mostrar cuántos caracteres tiene
+                        st.success(f"¡Libro cargado! ({len(texto_extraido)} caracteres).")
+                        st.info("💡 Se usará el método de 'Contexto Largo' (tipo NotebookLM).")
+                    else:
+                        st.error("El PDF parece estar vacío o es una imagen escaneada.")
+
+        elif st.session_state['texto_libro_completo']:
+            st.sidebar.success(f"Libro '{pdf_itinerario.name}' listo en memoria.")
                  
     # 2. Lógica de Generación y Auditoría de Ítems
     st.header("Generación y Auditoría de Ítems.")
@@ -1750,6 +1801,11 @@ def main():
                 if not st.session_state.get('selecciones_usuario'):
                     st.warning("⚠️ Por favor, selecciona al menos una habilidad para generar ítems.")
                 else:
+                    # --- LÍNEA AÑADIDA: Limpieza de estado anterior ---
+                    if 'item_under_review' in st.session_state:
+                        del st.session_state['item_under_review']
+                    # --- FIN DE LA MODIFICACIÓN ---
+
                     criterios_para_preguntas = {
                         "tipo_pregunta": "opción múltiple con 4 opciones",
                         "dificultad": "media",
@@ -1771,6 +1827,7 @@ def main():
                         st.session_state.awaiting_review = True
                         st.session_state.modo_lote = True
                         st.session_state.selecciones_usuario = {}
+                        st.session_state['used_contexts'] = [] # INICIALIZAR LA LISTA DE CONTEXTOS
                         st.rerun()
             
             # =============================================================================
@@ -1817,28 +1874,27 @@ def main():
                         }
                         criterios_para_preguntas = {"tipo_pregunta": "opción múltiple con 4 opciones", "dificultad": "media", "contexto_educativo": "estudiantes Colombianos entre 10 y 17 años"}
                       
-                        # --- AÑADIR ESTE BLOQUE DE BÚSQUEDA ---
-                        contexto_del_libro = ""
-                        if 'pdf_index' in st.session_state:
-                            with st.spinner("Buscando en el libro guía..."):
-                                # Usamos la microhabilidad como consulta
-                                query_microhabilidad = current_fila_datos.get('MICROHABILIDAD', '')
-                                
-                                # Buscamos los 3 chunks más relevantes
-                                chunks_relevantes = buscar_en_indice(query_microhabilidad, k=3)
-                                
-                                if chunks_relevantes:
-                                    contexto_del_libro = "\n\n---\n\n".join(chunks_relevantes)
-                                    st.info("ℹ️ Contexto relevante encontrado en el libro guía.")
-                        # --- FIN DEL BLOQUE DE BÚSQUEDA ---
-
+                        # 1. Recupera el texto completo
+                        contexto_del_libro = st.session_state.get('texto_libro_completo', "")
+                        
+                        # 2. (Opcional) Recorte de seguridad por si es MONSTRUOSAMENTE grande
+                        # Gemini 1.5 Flash aguanta ~1 millón de tokens (aprox 4 millones de caracteres).
+                        # Pero por seguridad y velocidad, puedes limitarlo si quieres.
+                        limite_caracteres = 1000000 # Unas 300-400 páginas aprox
+                        if len(contexto_del_libro) > limite_caracteres:
+                            contexto_del_libro = contexto_del_libro[:limite_caracteres]
+                            # st.toast("El libro se recortó para ajustarse al contexto.")
     
+                        # OBTENER CONTEXTOS USADOS Y PASARLOS
+                        contextos_usados = st.session_state.get('used_contexts', [])
                         item_to_review = generar_pregunta_con_seleccion(
                             gen_model_name, audit_model_name, fila_datos=current_fila_datos,
                             criterios_generacion=criterios_para_preguntas, manual_reglas_texto=manual_reglas_texto,
                             contexto_general_macrohabilidad=contexto_general_macrohabilidad,
                             prompt_bloom_adicional=prompt_bloom_adicional, prompt_construccion_adicional=prompt_construccion_adicional,
-                            prompt_especifico_adicional=prompt_especifico_adicional, prompt_auditor_adicional=prompt_auditor_adicional, descripcion_imagen_aprobada=descripcion_imagen_aprobada
+                            prompt_especifico_adicional=prompt_especifico_adicional, prompt_auditor_adicional=prompt_auditor_adicional, descripcion_imagen_aprobada=descripcion_imagen_aprobada,
+                            contexto_del_libro=contexto_del_libro,
+                            contextos_previos=contextos_usados
                         )
                         st.session_state['item_under_review'] = item_to_review
                         
@@ -1962,6 +2018,11 @@ def main():
                         with col_aprob:
                             if st.button("👍 Aprobar y Siguiente", key=f"approve_{current_index}", use_container_width=True):
                                 
+                                # AÑADIR CONTEXTO A LA LISTA DE USADOS
+                                contexto_usado = item_to_review.get("contexto_origen")
+                                if contexto_usado and 'used_contexts' in st.session_state:
+                                    st.session_state['used_contexts'].append(contexto_usado)
+
                                 # --- INICIO: NUEVA LÓGICA PARA CAPTURAR IMÁGENES ---
                                 if 'source_image_bytes' in st.session_state:
                                         item_to_review['source_image'] = io.BytesIO(st.session_state['source_image_bytes'])
@@ -2129,22 +2190,13 @@ def main():
                     
                     st.markdown("---")
                     if st.button("✨ Reset: Borrar información y generar nuevo ítem", use_container_width=True, type="primary"):
-                        
-                        # --- LÍNEAS AÑADIDAS PARA BORRAR PROGRESO ---
                         if 'nombre_archivo_progreso' in st.session_state:
                             borrar_progreso_en_gcs(GCS_BUCKET_NAME, st.session_state.nombre_archivo_progreso)
-                        # ----------------------------------------------
-                    
-                        # Limpiar todos los estados relevantes
                         
-                        keys_to_pop = ['approved_items', 'processed_items_list_for_review', 'current_review_index',
-                                       'awaiting_review', 'items_para_procesar', 'modo_lote', 'show_feedback_form',
-                                       'context_approved', 'generated_context', 'show_context_options', 'nombre_archivo_progreso',
-                                       'source_image_bytes', 'source_image_type', 'descripcion_imagen']
-
-                        for key in keys_to_pop:
-                            if key in st.session_state:
-                                st.session_state.pop(key)
+                        # Limpiar de forma robusta el estado de la sesión, conservando solo la autenticación
+                        for key in list(st.session_state.keys()):
+                            if key != 'authenticated':
+                                del st.session_state[key]
                         
                         st.rerun()
 

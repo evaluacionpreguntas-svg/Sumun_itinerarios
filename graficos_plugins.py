@@ -16,7 +16,7 @@ import graphviz
 from shapely.geometry import LineString, Polygon
 
 # IA (LangChain)
-from langchain.prompts import PromptTemplate
+from langchain_core.prompts import PromptTemplate
 import vertexai
 from langchain_google_vertexai import ChatVertexAI
 
