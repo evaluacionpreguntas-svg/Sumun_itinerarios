@@ -1,7 +1,7 @@
 
 # Paso 1: Usar una imagen base oficial de Python.
 # 'slim' es una versión ligera que hace la imagen final más pequeña.
-FROM python:3.10-slim
+FROM python:3.11-slim
 
 # Paso 2: Establecer el directorio de trabajo dentro del contenedor.
 # A partir de aquí, todos los comandos se ejecutan dentro de la carpeta /app.
