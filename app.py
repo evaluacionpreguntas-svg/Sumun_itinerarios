@@ -666,7 +666,7 @@ def main():
         contexto_educativo = criterios_generacion.get("contexto_educativo", "general")
         formato_justificacion = criterios_generacion.get("formato_justificacion", """
             • Justificación correcta: debe explicar el razonamiento o proceso cognitivo (NO por descarte).
-            • Justificaciones incorrectas: deben redactarse como: “El estudiante podría escoger la opción X porque… Sin embargo, esto es incorrecto porque…”
+            • Justificaciones incorrectas: deben redactarse como: “Se podría escoger la opción X porque… Sin embargo, esto es incorrecto porque…”
         """)
         fila_datos = normaliza_claves_classif(fila_datos)
         grado_elegido = fila_datos.get('GRADO', 'no especificado')
