@@ -575,7 +575,7 @@ def main():
     
     4.  **Respuesta Correcta Indicada:** La sección 'RESPUESTA CORRECTA:' debe estar presente, claramente indicada y coincidir con una de las opciones.
     
-    5.  **Diseño de Justificaciones:** Deben existir justificaciones diferenciadas para cada opción. La de la opción correcta debe explicar el razonamiento (no por descarte), y las de las incorrectas deben seguir el formato: “El estudiante podría escoger… Sin embargo, esto es incorrecto porque…”.
+    5.  **Diseño de Justificaciones:** Deben existir justificaciones diferenciadas para cada opción. La de la opción correcta debe explicar el razonamiento (no por descarte), y las de las incorrectas deben seguir el formato: “Se podría escoger… Sin embargo, esto es incorrecto porque…”.
     
     6.  **Estilo y Restricciones:** El ítem debe evitar negaciones mal redactadas, nombres/marcas/lugares reales, datos personales y frases vagas como “ninguna de las anteriores” o “todas las anteriores”.
     
