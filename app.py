@@ -11,7 +11,7 @@ import io
 import os
 import json
 import zipfile
-# --- NUEVA IMPORTACIÓN PARA GCS ---
+# --- NUEVAS IMPORTACIONES
 from google.cloud import storage
 import requests
 from streamlit_lottie import st_lottie
