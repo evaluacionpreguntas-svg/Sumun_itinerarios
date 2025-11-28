@@ -306,7 +306,7 @@ def main():
         st.stop()
 
     # --- Título Principal de la App ---
-    st.title("📚 Generador y Auditor de ítems final de itinerario SUMUN 🧠")
+    st.title("📚 Generador y Auditor de ítems final de itinerario SUMUN* 🧠")
     st.markdown("Esta aplicación genera ítems de selección múltiple y audita su calidad utilizando modelos de **Google Cloud Vertex AI**.")
 
 
